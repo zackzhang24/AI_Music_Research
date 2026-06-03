@@ -1,8 +1,19 @@
 # macOS metadata
 .DS_Store
 
-# Dataset audio files — 578 MB, track separately (git-lfs or cloud storage)
+# Dataset audio files — track separately (git-lfs or cloud storage)
 songs/
+standardized_songs_30s/
+
+# Large model checkpoints — download via benchmark_runner.py
+checkpoints/
+
+# HuggingFace download cache
+.hf_audio_cache/
+
+# Cloned detector repos (reinstalled via benchmark_runner.py)
+FST-AI-Music-Detection/
+ai-music-detection/
 
 # Python cache
 __pycache__/
