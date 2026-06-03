@@ -1,0 +1,10 @@
+# macOS metadata
+.DS_Store
+
+# Dataset audio files — 578 MB, track separately (git-lfs or cloud storage)
+songs/
+
+# Python cache
+__pycache__/
+*.pyc
+.venv/
