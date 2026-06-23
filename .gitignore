@@ -1,15 +1,43 @@
 # macOS metadata
 .DS_Store
 
-# Dataset audio files — track separately (git-lfs or cloud storage)
+# Audio is NEVER committed (large + may be copyrighted streaming downloads).
+# Blanket-ignore every audio container anywhere in the tree:
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.aac
+
+# Dataset / download / cache directories (incl. post-reorg renamed names)
 songs/
 standardized_songs_30s/
+new_ai_tracks_120s/
+new_ai_tracks_30s/
+new_ai_tracks_10s/
+ai_tracks_120s/
+human_tracks_120s/
+human_tracks_10s/
+url_test_downloads/
+
+# Cached embeddings / model weights / intermediate binaries
+*.npz
+*.ckpt
+*.pt
+*.pth
+
+# Runtime logs (verbose stderr dumps)
+*.log
 
 # Large model checkpoints — download via benchmark_runner.py
 checkpoints/
 
 # HuggingFace download cache
 .hf_audio_cache/
+.hf_sonics_meta/
+.hf_aime_cache/
+.fma_meta/
 
 # Cloned detector repos (reinstalled via benchmark_runner.py)
 FST-AI-Music-Detection/
