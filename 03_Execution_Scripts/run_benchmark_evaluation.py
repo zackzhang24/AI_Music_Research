@@ -76,6 +76,9 @@ CKPT_CLAP = _find_ckpt("checkpoints", "clap", "music_audioset_epoch_15_esc_90.14
 DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 BEAT_DEVICE = "cpu"
 ANALYZE_CAP_S = 300        # cap transcoded analysis WAV length (s)
+# Per-model sample rates: CLAP/Lcrosvila → 48 kHz; MERT/Mippia → 24 kHz (MERT-v1-95M).
+# 48 kHz audio MUST be downsampled before reaching MERT.
+MERT_SR = 24000
 
 # ── Dataset directories ───────────────────────────────────────────────────────
 DIRS = [
@@ -99,7 +102,7 @@ def to_wav(src: str, dst: str, cap_s: int = ANALYZE_CAP_S):
 
 
 # ═══════════════════════════════════ MIPPIA ═══════════════════════════════════
-def _load_audio_beats_patched(audio_path, sr=24000):
+def _load_audio_beats_patched(audio_path, sr=MERT_SR):   # 24 kHz — MERT's required rate
     import soundfile as sf, soxr
     from preprocess import get_segments_from_wav, find_optimal_segment_length
     _, downbeats = get_segments_from_wav(audio_path, device=BEAT_DEVICE)
@@ -112,18 +115,30 @@ def _load_audio_beats_patched(audio_path, sr=24000):
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
     fixed = 240_000
-    if waveform.shape[1] <= fixed:
-        waveform = torch.cat([waveform, torch.zeros(1, fixed, dtype=torch.float32)], dim=1)
-    segs = []
+    real_len = waveform.shape[1]                        # length of REAL audio (before any pad)
+    if real_len < fixed:
+        waveform = torch.cat(
+            [waveform, torch.zeros(1, fixed - real_len, dtype=torch.float32)], dim=1)
+    max_start = max(0, real_len - fixed)
+
+    # BUGFIX: clamp beat-anchored windows so the 10 s slice never enters the trailing
+    # zero-padding (late downbeats on short clips fed the model silence → P(AI)=0.011).
+    starts = []
     for st in cleaned:
-        s = int(st * sr); e = s + fixed
-        if e > waveform.size(1):
-            continue
-        segs.append(torch.tensor(waveform[:, s:e].squeeze().numpy(), dtype=torch.float32).unsqueeze(0))
-        if len(segs) >= 48:
+        s = min(max(0, int(st * sr)), max_start)
+        if s not in starts:
+            starts.append(s)
+        if len(starts) >= 48:
             break
-    if not segs:
-        return torch.zeros((1, 1, fixed), dtype=torch.float32), torch.ones(1, dtype=torch.bool)
+    if not starts:
+        s = 0
+        while s <= max_start and len(starts) < 48:
+            starts.append(s); s += fixed
+        if not starts:
+            starts = [0]
+
+    segs = [torch.tensor(waveform[:, s:s + fixed].squeeze().numpy(),
+                         dtype=torch.float32).unsqueeze(0) for s in starts]
     stacked = torch.stack(segs); n = stacked.shape[0]
     mask = torch.zeros(48, dtype=torch.bool)
     if n < 48:
@@ -148,7 +163,7 @@ def load_mippia():
 
 def mippia_pai(wav_path, s1, s2):
     """Return P(AI) ∈ [0,1]."""
-    segs, mask = _load_audio_beats_patched(wav_path)
+    segs, mask = _load_audio_beats_patched(wav_path, sr=MERT_SR)   # 24 kHz for MERT
     segs = segs.to(DEVICE).to(torch.float32)
     mask = mask.to(DEVICE).unsqueeze(0)
     with torch.no_grad():
@@ -167,16 +182,39 @@ def mippia_pai(wav_path, s1, s2):
 
 
 # ═══════════════════════════════════ LCROSVILA ════════════════════════════════
+CLAP_SR         = 48000          # CLAP native sample rate
+CLAP_CHUNK      = 480000         # 10 s chunk CLAP operates on
+CLAP_MAX_INTAKE = 120 * 48000    # ingest up to the first 2 minutes (5,760,000 samples)
+
+
 def load_clap():
     from model_loader import CLAPMusic
     clap = CLAPMusic(model_file=CKPT_CLAP)
     clap.load_model()
+    clap.model.eval()           # explicit eval — Dropout / BatchNorm deactivated
     return clap
 
 
 def clap_embed(wav_path, clap):
-    emb = clap._get_embedding([wav_path])      # (1,512) float16
-    return emb.astype(np.float32).squeeze(0)
+    """
+    Deterministic 2-minute chunked + mean-pooled CLAP embedding
+    (see run_streaming_evaluation.clap_embed).  Decode @48 kHz mono, take the first
+    120 s, slice into consecutive non-overlapping 10 s chunks, embed each full chunk
+    (len == chunk so CLAP never invokes np.random), and mean-pool -> one (512,)
+    vector.  Sub-10 s trailing remainder is ignored (not zero-padded); a < 10 s
+    track uses its single real chunk.
+    """
+    import librosa
+    y, _ = librosa.load(wav_path, sr=CLAP_SR, mono=True)     # 48 kHz mono — enforced
+    y = np.asarray(y, dtype=np.float32)[:CLAP_MAX_INTAKE]    # first 2 minutes only
+    n_full = y.shape[0] // CLAP_CHUNK
+    if n_full >= 1:
+        chunks = [y[i * CLAP_CHUNK:(i + 1) * CLAP_CHUNK] for i in range(n_full)]
+    else:
+        chunks = [y]                                        # < 10 s track -> single real chunk
+    clap.model.eval()
+    embs = clap.model.get_audio_embedding_from_data(x=chunks, use_tensor=False)   # (N, 512)
+    return np.asarray(embs, dtype=np.float32).mean(axis=0)  # mean-pool -> (512,)
 
 
 def lcrosvila_loo(embeddings, labels):

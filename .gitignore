@@ -27,6 +27,12 @@ url_test_downloads/
 *.pt
 *.pth
 
+# Multi-codec data-augmentation artifacts (large; regenerate via
+# augment_training_data.py + train_augmented_classifier.py — do not push)
+.clap_train_embeddings_augmented.npz
+augmented_validation_results.csv
+03_Execution_Scripts/data/train_augmented/
+
 # Runtime logs (verbose stderr dumps)
 *.log
 
