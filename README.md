@@ -103,12 +103,13 @@ The contextual signals are combined with the acoustic result using a weighted la
        ┌─────────────┼─────────────┐
        │             │             │
        ▼             ▼             ▼
-   Copyright      Creator       Audience
+    Copyright      Creator       Audience
     Metadata     Description     Comments
        │             │             │
        └─────────────┼─────────────┘
                      ▼
               Final AI Score
+
 
 If one contextual source is unavailable, the remaining signals can still contribute to the final result.
 
